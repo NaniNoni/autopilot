@@ -1,16 +1,16 @@
 #include "orchestrator.hpp"
 #include "llama.h"
 
-#include <cstdio>
 #include <expected>
 #include <print>
 #include <iostream>
 
+#include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 
 static void llama_log_callback(enum ggml_log_level level, const char* text, [[maybe_unused]] void* user_data) {
     if (level >= GGML_LOG_LEVEL_WARN) {
-        std::print("{}", text);
+        spdlog::debug("{}", text);
     }
 }
 
@@ -20,7 +20,7 @@ std::expected<void, OrchestratorError> Orchestrator::init() noexcept {
     const char* orchestrator_path_env = std::getenv("ORCHESTRATOR_MODEL_PATH");
     std::string orchestrator_path = orchestrator_path_env ? orchestrator_path_env : DEFAULT_ORCHESTRATOR_PATH;
     if (orchestrator_path.empty()) {
-        std::println("Error: Orchestrator path is empty");
+        spdlog::error("Error: Orchestrator path is empty");
         return std::unexpected(OrchestratorError::MODEL_BAD_PATH);
     }
 
@@ -29,8 +29,13 @@ std::expected<void, OrchestratorError> Orchestrator::init() noexcept {
     model_params.n_gpu_layers = N_GPU_LAYERS;
     model = llama_model_load_from_file(orchestrator_path.c_str(), model_params);
     if (model == nullptr) {
-        std::println("Error: unable to load model {}", orchestrator_path);
+        spdlog::error("Error: unable to load model {}", orchestrator_path);
         return std::unexpected(OrchestratorError::MODEL_LOAD_FAILED);
+    }
+
+    if (!m_window_state_provider.init()) {
+        spdlog::error("Failed to initialize window state provider");
+        return std::unexpected(OrchestratorError::STATE_PROVIDER_ERROR);
     }
 
     vocab = llama_model_get_vocab(model);
@@ -89,7 +94,7 @@ std::string Orchestrator::build_history() noexcept {
     out += '\n';
     out += IDENTITY_MESSAGE.to_string();
 
-    for (Message message : history) {
+    for (Message message : m_history) {
         out += message.to_string();
     }
 
@@ -103,7 +108,7 @@ std::string Orchestrator::build_history() noexcept {
 }
 
 int Orchestrator::process_prompt(const std::string& user_prompt) {
-    history.push_back(Message {
+    m_history.push_back(Message {
         .role = MessagerRole::User,
         .content = user_prompt
     });
@@ -210,7 +215,7 @@ int Orchestrator::process_prompt(const std::string& user_prompt) {
         }
     }
 
-    history.push_back(Message {
+    m_history.push_back(Message {
         .role = MessagerRole::Assistant,
         .content = assistant_text
     });

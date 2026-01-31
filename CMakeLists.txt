@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 project(autosktop LANGUAGES CXX)
 include(FetchContent)
 
+find_package(PkgConfig REQUIRED)
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 FetchContent_Declare(llama_cpp
@@ -23,6 +25,7 @@ add_executable(${CMAKE_PROJECT_NAME}
     src/main.cpp
     src/application.cpp
     src/orchestrator.cpp
+    src/window_state_provider.cpp
 )
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE include)
 
@@ -42,6 +45,7 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     DEFAULT_ORCHESTRATOR_PATH="${MODEL_PATH}"
 )
 
+pkg_check_modules(WAYLAND REQUIRED IMPORTED_TARGET wayland-client)
 find_program(HYPRWAYLAND_SCANNER hyprwayland-scanner REQUIRED)
 set(PROTOCOLS_DIR ${CMAKE_SOURCE_DIR}/protocols)
 set(GEN_DIR ${CMAKE_BINARY_DIR}/generated/wayland)
@@ -54,7 +58,7 @@ function(generate_protocol_bindings PROTO_NAME)
 
     add_custom_command(
         OUTPUT ${${PROTO_NAME}_GEN_CPP} ${${PROTO_NAME}_GEN_HPP}
-        COMMAND ${HYPRWAYLAND_SCANNER} --client --wayland-enums
+        COMMAND ${HYPRWAYLAND_SCANNER} --client
             ${${PROTO_NAME}_XML} ${GEN_DIR}
         DEPENDS ${${PROTO_NAME}_XML}
         COMMENT "Generating protocol bindings for ${PROTO_NAME} (hyprwayland-scanner)"
@@ -69,13 +73,18 @@ endfunction()
 
 generate_protocol_bindings(cosmic-toplevel-management-unstable-v1)
 generate_protocol_bindings(cosmic-toplevel-info-unstable-v1)
+generate_protocol_bindings(ext-foreign-toplevel-list-v1)
+generate_protocol_bindings(ext-workspace-v1)
 
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
     llama
     nlohmann_json::nlohmann_json
     spdlog::spdlog
 
-    # Wayland protocols
+    # wayland-client and protocols
+    PkgConfig::WAYLAND
     cosmic-toplevel-management-unstable-v1
     cosmic-toplevel-info-unstable-v1
+    ext-foreign-toplevel-list-v1
+    ext-workspace-v1
 )

@@ -7,6 +7,7 @@
 #include <llama.h>
 
 #include "int_types.hpp"
+#include "window_state_provider.hpp"
 
 const std::string SYSTEM_PROMPT = R"(
 You are a desktop assistant that can (1) reply to the user in plain text and (2) operate the desktop via JSON commands executed by a host program.
@@ -163,7 +164,8 @@ struct Message {
 
 enum class OrchestratorError {
     MODEL_BAD_PATH,
-    MODEL_LOAD_FAILED
+    MODEL_LOAD_FAILED,
+    STATE_PROVIDER_ERROR
 };
 
 class Orchestrator {
@@ -175,7 +177,8 @@ public:
 
 private:
     [[nodiscard]] std::string build_history() noexcept;
-    std::vector<Message> history {};
+    std::vector<Message> m_history {};
+    WindowStateProvider m_window_state_provider {};
 
     llama_model* model = nullptr;
     llama_context* ctx = nullptr;
