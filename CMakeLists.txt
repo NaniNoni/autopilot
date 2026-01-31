@@ -23,7 +23,6 @@ FetchContent_Declare(spdlog
 set(GGML_CUDA ON)
 FetchContent_MakeAvailable(llama_cpp nlohmann_json spdlog)
 
-# --- main target ---
 add_executable(${CMAKE_PROJECT_NAME}
     src/main.cpp
     src/application.cpp
@@ -41,11 +40,11 @@ set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES
 # model path define
 file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/models)
 include(cmake/download_model.cmake)
+download_model(${MODEL_PATH} ${MODEL_URL})
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     DEFAULT_ORCHESTRATOR_PATH="${MODEL_PATH}"
 )
 
-# --- wayland ---
 pkg_check_modules(WAYLAND REQUIRED IMPORTED_TARGET wayland-client)
 find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
 
