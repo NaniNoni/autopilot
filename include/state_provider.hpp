@@ -4,7 +4,8 @@
 #include <variant>
 
 enum class WindowStateProviderError {
-    WL_DISPLAY_CONNECT_ERROR
+    WL_DISPLAY_CONNECT_ERROR,
+    WL_UNSUPPORTED_COMPOSITOR
 };
 
 using StateProviderError = std::variant<WindowStateProviderError>;
