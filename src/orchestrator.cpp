@@ -1,5 +1,7 @@
 #include "orchestrator.hpp"
 #include "llama.h"
+#include "state_request.hpp"
+#include "window_state_provider.hpp"
 
 #include <expected>
 #include <print>
@@ -33,10 +35,12 @@ std::expected<void, OrchestratorError> Orchestrator::init() noexcept {
         return std::unexpected(OrchestratorError::MODEL_LOAD_FAILED);
     }
 
-    if (!m_window_state_provider.init()) {
+    auto window_state_provider = std::make_unique<WindowStateProvider>();
+    if (!window_state_provider->init()) {
         spdlog::error("Failed to initialize window state provider");
         return std::unexpected(OrchestratorError::STATE_PROVIDER_ERROR);
     }
+    m_state_providers.insert({StateProviderKind::WINDOW, std::move(window_state_provider)});
 
     vocab = llama_model_get_vocab(model);
     while (true) {
@@ -113,6 +117,44 @@ int Orchestrator::process_prompt(const std::string& user_prompt) {
         .content = user_prompt
     });
 
+    std::expected<std::string, LLMError> llm_out = run_llm();
+    if (!llm_out) {
+        spdlog::error("Error occurred while running LLM, exiting.");
+        return 1;
+    }
+
+    // determine if the LLM output is a state-fetch instruction
+    // for now, any valid json is considered a state-fetch instruction
+    // this should probably be fixed for security purposes
+    std::expected<StateRequest, StateRequestError> req = StateRequest::from_json(*llm_out);
+    if (req) {
+        StateProviderKind kind = (*req).kind;
+        std::unique_ptr<StateProvider>& provider = m_state_providers[kind];
+        nlohmann::json out = provider->processRequest(*req);
+
+        m_history.push_back(Message {
+            .role = MessagerRole::System,
+            .content = out.dump(4)
+        });
+
+        std::println();
+
+        std::expected<std::string, LLMError> llm_response = run_llm();
+        if (!llm_response) {
+            spdlog::error("Error occurred while running LLM, exiting.");
+            return 1;
+        }
+    }
+    else {
+        spdlog::debug("Assitant output is not a valid JSON command. Continuing.");
+    }
+
+    std::println();
+
+    return 0;
+}
+
+std::expected<std::string, Orchestrator::LLMError> Orchestrator::run_llm() noexcept {
     std::string full_prompt = build_history();
 
     // tokenize the prompt
@@ -121,8 +163,8 @@ int Orchestrator::process_prompt(const std::string& user_prompt) {
     // allocate space for the tokens and tokenize the prompt
     std::vector<llama_token> prompt_tokens(n_prompt);
     if (llama_tokenize(vocab, full_prompt.c_str(), full_prompt.size(), prompt_tokens.data(), prompt_tokens.size(), false, true) < 0) {
-        std::println("Error: failed to tokenize the prompt - {}", full_prompt);
-        return 1;
+        spdlog::error("Failed to tokenize the prompt - {}", full_prompt);
+        return std::unexpected(LLMError::TOKENIZE_FAILED);
     }
 
     llama_context_params ctx_params = llama_context_default_params();
@@ -135,8 +177,8 @@ int Orchestrator::process_prompt(const std::string& user_prompt) {
 
     ctx = llama_init_from_model(model, ctx_params);
     if (ctx == nullptr) {
-        std::println("Error: failed to create llama_context");
-        return 1;
+        spdlog::error("Failed to create llama_context");
+        return std::unexpected(LLMError::CONTEXT_CREATION_FAILED);
     }
 
     auto sparams = llama_sampler_chain_default_params();
@@ -150,8 +192,8 @@ int Orchestrator::process_prompt(const std::string& user_prompt) {
         char buf[128];
         int n = llama_token_to_piece(vocab, id, buf, sizeof(buf), 0, true);
         if (n < 0) {
-            std::println("Error: failed to convert token to piece");
-            return 1;
+            std::println("Failed to convert token to piece");
+            return std::unexpected(LLMError::TOKEN_TO_PIECE_CONVERSION_FAILED);
         }
     }
 
@@ -160,8 +202,8 @@ int Orchestrator::process_prompt(const std::string& user_prompt) {
 
     if (llama_model_has_encoder(model)) {
         if (llama_encode(ctx, batch)) {
-            std::println("Error : failed to eval");
-            return 1;
+            std::println("Failed to eval");
+            return std::unexpected(LLMError::EVALUATION_FAILED);
         }
 
         llama_token decoder_start_token_id = llama_model_decoder_start_token(model);
@@ -180,8 +222,8 @@ int Orchestrator::process_prompt(const std::string& user_prompt) {
     for (int n_pos = 0; n_pos + batch.n_tokens < n_prompt + N_PREDICT; ) {
         // evaluate the current batch with the transformer model
         if (llama_decode(ctx, batch)) {
-            fprintf(stderr, "%s : failed to eval, return code %d\n", __func__, 1);
-            return 1;
+            spdlog::error("Failed to eval");
+            return std::unexpected(LLMError::EVALUATION_FAILED);
         }
 
         n_pos += batch.n_tokens;
@@ -199,7 +241,7 @@ int Orchestrator::process_prompt(const std::string& user_prompt) {
             int n = llama_token_to_piece(vocab, new_token_id, buf, sizeof(buf), 0, false);
             if (n < 0) {
                 fprintf(stderr, "%s: error: failed to convert token to piece\n", __func__);
-                return 1;
+                return std::unexpected(LLMError::TOKEN_TO_PIECE_CONVERSION_FAILED);
             }
 
             std::string_view piece(buf, n);
@@ -220,18 +262,5 @@ int Orchestrator::process_prompt(const std::string& user_prompt) {
         .content = assistant_text
     });
 
-    printf("\n");
-
-    const auto t_main_end = ggml_time_us();
-
-    fprintf(stderr, "%s: decoded %d tokens in %.2f s, speed: %.2f t/s\n",
-            __func__, n_decode, (t_main_end - t_main_start) / 1000000.0f, n_decode / ((t_main_end - t_main_start) / 1000000.0f));
-
-
-    // fprintf(stderr, "\n");
-    // llama_perf_sampler_print(smpl);
-    // llama_perf_context_print(ctx);
-    fprintf(stderr, "\n");
-
-    return 0;
+    return assistant_text;
 }

@@ -2,6 +2,7 @@
 #include "ext-foreign-toplevel-list-v1-client-protocol.h"
 #include "int_types.hpp"
 #include "state_provider.hpp"
+#include "state_request.hpp"
 
 #include <spdlog/spdlog.h>
 #include <wayland-client-core.h>
@@ -34,6 +35,95 @@ WindowStateProvider::~WindowStateProvider() noexcept {
     wl_display_disconnect(m_display);
 }
 
+nlohmann::json WindowStateProvider::processRequest(StateRequest req) noexcept {
+    nlohmann::json out;
+
+    if (req.kind != StateProviderKind::WINDOW) {
+        out["ok"] = false;
+        out["error"] = "wrong_provider_kind";
+        return out;
+    }
+
+    try {
+        if (!req.args.is_object()) {
+            out["ok"] = false;
+            out["error"] = "args_not_object";
+            return out;
+        }
+
+        if (!req.args.contains("action") || !req.args["action"].is_string()) {
+            out["ok"] = false;
+            out["error"] = "missing_or_invalid_action";
+            return out;
+        }
+
+        const std::string action = req.args["action"].get<std::string>();
+
+        const nlohmann::json params =
+            (req.args.contains("params") && req.args["params"].is_object())
+                ? req.args["params"]
+                : nlohmann::json::object();
+
+        if (action == "get_open_windows") {
+            const auto windows = get_open_windows();
+
+            nlohmann::json arr = nlohmann::json::array();
+            for (const auto& w : windows) {
+                arr.push_back({
+                    {"window_id", w.window_id},
+                    {"title",     w.title},
+                    {"app_id",    w.app_id},
+                });
+            }
+
+            out["ok"] = true;
+            out["action"] = action;
+            out["windows"] = std::move(arr);
+            return out;
+        }
+
+        if (action == "get_window_state") {
+            if (!params.contains("window_id") || !params["window_id"].is_string()) {
+                out["ok"] = false;
+                out["action"] = action;
+                out["error"] = "missing_or_invalid_window_id";
+                return out;
+            }
+
+            const std::string window_id = params["window_id"].get<std::string>();
+            const auto info = get_window_state(window_id);
+
+            if (!info) {
+                out["ok"] = false;
+                out["action"] = action;
+                out["error"] = "not_found";
+                out["window_id"] = window_id;
+                return out;
+            }
+
+            out["ok"] = true;
+            out["action"] = action;
+            out["window"] = {
+                {"window_id", info->window_id},
+                {"title",     info->title},
+                {"app_id",    info->app_id},
+            };
+            return out;
+        }
+
+        // Unknown action
+        out["ok"] = false;
+        out["error"] = "unknown_action";
+        out["action"] = action;
+        return out;
+    }
+    catch (const std::exception& e) {
+        spdlog::error("WindowStateProvider::processRequest error: {}", e.what());
+        out["ok"] = false;
+        out["error"] = "exception";
+        return out;
+    }
+}
 
 void WindowStateProvider::on_registry_global(
     void* data, wl_registry* registry, u32 name, const char* interface, u32 version)

@@ -12,6 +12,7 @@
 #include <ext-foreign-toplevel-list-v1-client-protocol.h>
 
 #include "state_provider.hpp"
+#include "state_request.hpp"
 
 struct WindowInfo {
     std::string window_id;
@@ -23,6 +24,7 @@ class WindowStateProvider : public StateProvider {
 public:
     ~WindowStateProvider() noexcept;
     std::expected<void, StateProviderError> init() noexcept;
+    nlohmann::json processRequest(StateRequest req) noexcept;
 
     [[nodiscard]] std::vector<WindowInfo> get_open_windows() noexcept;
     [[nodiscard]] std::optional<WindowInfo> get_window_state(std::string_view window_id) noexcept;

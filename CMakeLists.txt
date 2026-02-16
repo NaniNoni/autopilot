@@ -28,6 +28,7 @@ add_executable(${CMAKE_PROJECT_NAME}
     src/application.cpp
     src/orchestrator.cpp
     src/window_state_provider.cpp
+    src/state_request.cpp
 )
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE include)
 
